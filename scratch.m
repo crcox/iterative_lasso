@@ -1,1 +1,1 @@
-Goobye!
+% Use this file as a scratch pad during development.
