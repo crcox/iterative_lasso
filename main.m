@@ -4,7 +4,7 @@
 function results = main()
 	%% Set Variables
 	% For you, it will be something like ../data
-	DATA_PATH = '/home/chris/JLPeacock_JNeuro2008/orig/mat';
+	DATA_PATH = '../data';
 	N_SUB = 10;
 	N_CV = 10;
     TargetCategory = 'TrueFaces';
@@ -24,27 +24,20 @@ function results = main()
 	Y = Y{1};
 
 	% Before starting the loop: see if there is a checkpoint file.
-	if exist(fullfile(pwd, 'CHECKPOINT.mat'), 'file') == 2
-		load('CHECKPOINT.mat','cc');
+	if exist(fullfile(pwd, 'CHECKPOINT.mat','UNUSED_VOXELS','ii','jj','err','dp'), 'file') == 2
+		load('CHECKPOINT.mat');
 		start_cc = cc;
 		fprintf('++Resuming from CV%02d\n',cc);
 	else
 		start_cc = 1;
-	end
-
-	% Before starting the loop: see if there is a checkpoint file.
-	if exist(fullfile(pwd, 'CHECKPOINT.mat'), 'file') == 2
-		load('CHECKPOINT.mat','UNUSED_VOXELS','ii','jj','err','dp');
-	else
-		UNUSED_VOXELS = true(size(X,2),N_CV);
+        UNUSED_VOXELS = true(size(X,2),N_CV);
 		ii = 0;
         jj = 0;
 		err = 0;
 		dp = 0;
-	end
+    end
 	
 	while true
-		fprintf('\t% 6d',sum(UNUSED_VOXELS));
 		% Increment loop counter
 		ii = ii + 1;
 
@@ -66,12 +59,12 @@ function results = main()
 			fold_id = transpose(fold_id);
 
 			% Run cvglmnet to determine a good lambda.
-			fitObj_cv(ii,cc) = cvglmnet(Xtrain(:,UNUSED_VOXELS),Ytrain, ...
+			fitObj_cv(ii,cc) = cvglmnet(Xtrain(:,UNUSED_VOXELS(:,cc)),Ytrain, ...
 				                     'binomial',opts,'class',9,fold_id);
 
 			% Set that lambda in the opts structure, and fit a new model.
 			opts.lambda = fitObj_cv(ii,cc).lambda_min;
-			fitObj(ii,cc) = glmnet(Xtrain(:,UNUSED_VOXELS),Ytrain,'binomial',opts);
+			fitObj(ii,cc) = glmnet(Xtrain(:,UNUSED_VOXELS(:,cc)),Ytrain,'binomial',opts);
 
 			% Unset lambda, so next time around cvglmnet will look for lambda
 			% itself.
@@ -79,7 +72,7 @@ function results = main()
 
 			% Evaluate this new model on the holdout set.
 			% Step 1: compute the model predictions.
-			yhat = (X(:,UNUSED_VOXELS)*fitObj(ii,cc).beta)+fitObj.a0(ii,cc);
+			yhat = (X(:,UNUSED_VOXELS(:,cc))*fitObj(ii,cc).beta)+fitObj(ii,cc).a0;
 			% Step 2: compute the error of those predictions.
 			err(ii,cc) = 1-mean(Y(FINAL_HOLDOUT)==(yhat(FINAL_HOLDOUT)>0));
 			% Step 3: compute the sensitivity of those predictions (dprime).
@@ -90,7 +83,7 @@ function results = main()
 			UNUSED_VOXELS(UNUSED_VOXELS(:,cc),cc) = fitObj(ii,cc).beta==0;
 
 			% Save a checkpoint file
-			save('CHECKPOINT.mat','cc','UNUSED_VOXELS','ii','err','dp');
+			save('CHECKPOINT.mat','cc','UNUSED_VOXELS','ii','jj','err','dp');
 
         end
         
@@ -115,4 +108,5 @@ function results = main()
     results.fitObj_cv = fitObj_cv;
     results.err = err;
     results.dp = dp;
+    delete('CHECKPOINT.mat');
 end
