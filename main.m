@@ -4,9 +4,11 @@
 function results = main()
 	%% Set Variables
 	% For you, it will be something like ../data
-	DATA_PATH = '../data';
+	DATA_PATH = '/home/chris/JLPeacock_JNeuro2008/orig/mat';
 	N_SUB = 10;
 	N_CV = 10;
+	% Just an estimate for the max number of iterations, for preallocating.
+	N_ITER_EST = 10; 
     TargetCategory = 'TrueFaces';
 	opts = glmnetSet();
 	opts.alpha = 1; % 1 means LASSO; 0 means Ridge
@@ -24,17 +26,20 @@ function results = main()
 	Y = Y{1};
 
 	% Before starting the loop: see if there is a checkpoint file.
-	if exist(fullfile(pwd, 'CHECKPOINT.mat','UNUSED_VOXELS','ii','jj','err','dp'), 'file') == 2
+	if exist(fullfile(pwd, 'CHECKPOINT.mat'), 'file') == 2
 		load('CHECKPOINT.mat');
 		start_cc = cc;
 		fprintf('++Resuming from CV%02d\n',cc);
 	else
-		start_cc = 1;
-        UNUSED_VOXELS = true(size(X,2),N_CV);
+		fprintf('starting from scratch\n');
 		ii = 0;
         jj = 0;
-		err = 0;
-		dp = 0;
+		start_cc = 1;
+		dp = zeros(N_ITER_EST,N_CV);
+		err = zeros(N_ITER_EST,N_CV);
+		fitObj(N_ITER_EST,N_CV) = struct();
+		fitObj_cv(N_ITER_EST,N_CV) = struct();
+        UNUSED_VOXELS = true(size(X,2),N_CV,N_ITER_EST);
     end
 	
 	while true
@@ -59,12 +64,12 @@ function results = main()
 			fold_id = transpose(fold_id);
 
 			% Run cvglmnet to determine a good lambda.
-			fitObj_cv(ii,cc) = cvglmnet(Xtrain(:,UNUSED_VOXELS(:,cc)),Ytrain, ...
+			fitObj_cv(ii,cc) = cvglmnet(Xtrain(:,UNUSED_VOXELS(:,cc,ii)),Ytrain, ...
 				                     'binomial',opts,'class',9,fold_id);
 
 			% Set that lambda in the opts structure, and fit a new model.
 			opts.lambda = fitObj_cv(ii,cc).lambda_min;
-			fitObj(ii,cc) = glmnet(Xtrain(:,UNUSED_VOXELS(:,cc)),Ytrain,'binomial',opts);
+			fitObj(ii,cc) = glmnet(Xtrain(:,UNUSED_VOXELS(:,cc,ii)),Ytrain,'binomial',opts);
 
 			% Unset lambda, so next time around cvglmnet will look for lambda
 			% itself.
@@ -72,23 +77,27 @@ function results = main()
 
 			% Evaluate this new model on the holdout set.
 			% Step 1: compute the model predictions.
-			yhat = (X(:,UNUSED_VOXELS(:,cc))*fitObj(ii,cc).beta)+fitObj(ii,cc).a0;
+			yhat = (X(:,UNUSED_VOXELS(:,cc,ii))*fitObj(ii,cc).beta)+fitObj(ii,cc).a0;
 			% Step 2: compute the error of those predictions.
 			err(ii,cc) = 1-mean(Y(FINAL_HOLDOUT)==(yhat(FINAL_HOLDOUT)>0));
 			% Step 3: compute the sensitivity of those predictions (dprime).
 			dp(ii,cc) = dprimeCV(Y,yhat>0,FINAL_HOLDOUT);
-			fprintf('% 1.3f% 1.3f\n',err,dp);
+			fprintf('% 1.3f% 1.3f\n',err(ii,cc),dp(ii,cc));
 			
 			% Indicate which voxels were used/update the set of unused voxels.
-			UNUSED_VOXELS(UNUSED_VOXELS(:,cc),cc) = fitObj(ii,cc).beta==0;
+			UNUSED_VOXELS(UNUSED_VOXELS(:,cc,ii),cc,ii+1) = fitObj(ii,cc).beta==0;
 
 			% Save a checkpoint file
-			save('CHECKPOINT.mat','cc','UNUSED_VOXELS','ii','jj','err','dp');
+			save('CHECKPOINT.mat','cc','UNUSED_VOXELS','ii','jj','err','dp','fitObj','fitObj_cv');
 
         end
         
         %% Test if the dprime is significantly greater than zero.
-        if ttest(dp(ii,:),0,'Alpha',0.05,'Tail','right');
+		h = ttest(dp(ii,:),0,'Alpha',0.05,'Tail','right');
+		if isnan(h)
+			h = false
+		end
+        if h==true
             % If it is, reset jj ...
             jj = 0;
         else
@@ -104,9 +113,28 @@ function results = main()
 		
 		fprintf('\n');
     end
-    results.fitObj = fitObj;
-    results.fitObj_cv = fitObj_cv;
-    results.err = err;
-    results.dp = dp;
+
+	%% Fit model using all voxels from models with above chance performance (1:(ii-3)).
+	USEFUL_VOXELS = ~UNUSED_VOXELS(:,:,ii-3);
+	b=glmfit(Xtrain(:,USEFUL_VOXELS),Ytrain,'binomial');
+	a0 = b(1);
+	b(1) = [];
+	
+	% Evaluate this new model on the holdout set.
+	% Step 1: compute the model predictions.
+	yhat = X(:,USEFUL_VOXELS)*b + a0;
+	% Step 2: compute the error of those predictions.
+	errU = 1-mean(Y(FINAL_HOLDOUT)==(yhat(FINAL_HOLDOUT)>0));
+	% Step 3: compute the sensitivity of those predictions (dprime).
+	dpU = dprimeCV(Y,yhat>0,FINAL_HOLDOUT);
+
+	%% Package results 
+    results.fitObj = fitObj(1:ii,:);
+    results.fitObj_cv = fitObj_cv(1:ii,:);
+    results.err = err(1:ii,:);
+    results.dp = dp(1:ii,:);
+	results.errU = errU;
+	results.dpU = dpU;
+	results.UNUSED_VOXELS = UNUSED_VOXELS(:,:,1:ii);
     delete('CHECKPOINT.mat');
 end
