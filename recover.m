@@ -1,4 +1,4 @@
-function results = recover()
+function results = recover(results)
 	%% Set Variables
 	% For you, it will be something like ../data
 	DATA_PATH = '/home/chris/JLPeacock_JNeuro2008/orig/mat';
@@ -28,14 +28,18 @@ function results = recover()
 %     fitObj_cv(10) = struct();
 %     fitObj(10) = struct();
 
-	load('results_subj1.mat');
-	UNUSED_VOXELS = true(size(results.fitObj(1,1).beta,1),N_CV);
-	for i=1:2
-		for j=1:10
-			UNUSED_VOXELS(UNUSED_VOXELS(:,j),j) = results.fitObj(i,j).beta == 0;
-		end
-	end
+UNUSED_VOXELS = results.UNUSED_VOXELS;
+% 	load('results_subj1.mat');
+% 	UNUSED_VOXELS = true(size(results.fitObj(1,1).beta,1),N_CV);
+% 	for i=1:2
+% 		for j=1:10
+% 			UNUSED_VOXELS(UNUSED_VOXELS(:,j),j) = results.fitObj(i,j).beta == 0;
+% 		end
+%     end
 
+    dp_c_glm = zeros(1,N_CV);
+    err_c_glm = zeros(1,N_CV);
+    ix = 1:N_CV;
 	for cc = start_cc:N_CV
         disp(cc)
 		% Remove the holdout set
@@ -45,18 +49,21 @@ function results = recover()
 		Ytrain = Y(~FINAL_HOLDOUT);
 		
 		%% Fit model using all voxels from models with above chance performance (1:(ii-3)).
-		USEFUL_VOXELS = ~UNUSED_VOXELS(:,cc,end);
-% 		b=glmfit(Xtrain(:,USEFUL_VOXELS),Ytrain,'binomial');
-% 		a0 = b(1);
-% 		b(1) = [];
-% 	
-% 		% Evaluate this new model on the holdout set.
-% 		% Step 1: compute the model predictions.
-% 		yhat = X(:,USEFUL_VOXELS)*b + a0;
-% 		% Step 2: compute the error of those predictions.
-% 		errU(1,cc) = 1-mean(Y(FINAL_HOLDOUT)==(yhat(FINAL_HOLDOUT)>0));
-% 		% Step 3: compute the sensitivity of those predictions (dprime).
-% 		dpU(1,cc) = dprimeCV(Y,yhat>0,FINAL_HOLDOUT);
+		USEFUL_VOXELS = ~UNUSED_VOXELS(:,:,end-2);
+        USEFUL_VOXELS = all([USEFUL_VOXELS(:,cc),sum(USEFUL_VOXELS(:,ix~=cc),2)>2],2);
+%         USEFULL_VOXELS = USEFULL_VOXELS(:,cc);
+        
+		b=glmfit(Xtrain(:,USEFUL_VOXELS),Ytrain,'binomial');
+		a0 = b(1);
+		b(1) = [];
+	
+		% Evaluate this new model on the holdout set.
+		% Step 1: compute the model predictions.
+		yhat = X(:,USEFUL_VOXELS)*b + a0;
+		% Step 2: compute the error of those predictions.
+		err_c_glm(1,cc) = 1-mean(Y(FINAL_HOLDOUT)==(yhat(FINAL_HOLDOUT)>0));
+		% Step 3: compute the sensitivity of those predictions (dprime).
+		dp_c_glm(1,cc) = dprimeCV(Y,yhat>0,FINAL_HOLDOUT);
         
         % Convert CV2 to fold_id
         fold_id = sum(bsxfun(@times,double(CV2),1:9),2);
@@ -85,6 +92,8 @@ function results = recover()
         dpU(cc) = dprimeCV(Y,yhat>0,FINAL_HOLDOUT);
 	end
 	%% Package results 
+    results.err_c_glm = err_c_glm;
+    results.dp_c_glm = dp_c_glm;
 	results.errU = errU;
 	results.dpU = dpU;
     results.UNUSED_VOXELS = UNUSED_VOXELS;
